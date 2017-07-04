@@ -19,7 +19,7 @@
       msg: "Abort! OSX splunk forwarder already installed!"
     when: is_osx_installed.results|length >= 1 and is_osx_installed.results[0].yumstate == 'installed'
   
-  # REMOVE old Splunk from osw1 if there is any.
+  # REMOVE old Splunk from osw1 if installed.
   - name: check if old splunk from osw1 is installed
     yum: list=splunk-jboss-tomcat
     register: is_installed
