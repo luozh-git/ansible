@@ -1,0 +1,58 @@
+---
+- hosts: splunk_sl3_nodes
+  become: yes
+  become_method: sudo
+  become_flags: -s
+
+  vars:
+    DEPLOYMENT_SERVER: 10.58.140.87
+
+  tasks:
+  - name: REMOVE old Splunk from osw1. Stop old Splunk service
+    service: name=splunk state=stopped
+
+  - name: check if old splunk from osw1 is installed
+    command: rpm -q splunk-jboss-tomcat
+    register: osw1_rpm_check
+
+  - name: remove it if installed
+    yum: name=splunk-jboss-tomcat state=absent
+    when: osw1_rpm_check.rc==0
+
+  - name: clean up old splunk directory
+    file: path=/data/splunkforwarder state=absent
+    when: osw1_rpm_check.rc==0
+
+  - name: delete the old splunk service
+    command: chkconfig --del splunk
+    when: osw1_rpm_check.rc==0
+
+  - name: INSTALL new Splunk from OSX. create /data/tmp
+    file: path=/data/tmp state=directory
+
+  - name: copy splunk rpm file
+    copy: src=splunkforwarder-latest-linux-2.6-x86_64.rpm dest=/data/tmp/splunkforwarder-latest-linux-2.6-x86_64.rpm
+
+  - name: install sysstat and bc
+    yum: name=sysstat,bc state=present
+
+  - name: install splunk forwarder
+    yum: name=/data/tmp/splunkforwarder-latest-linux-2.6-x86_64.rpm state=present
+
+  - name: accept-license
+    shell: su - splunk -c "splunk start --accept-license"
+
+  - name: set deployment server
+    shell: su - splunk -c "splunk set deploy-poll 10.58.140.87:8089 -auth admin:changeme"
+
+  - name: enable init script
+    shell: /opt/splunkforwarder/bin/splunk enable boot-start -user splunk
+
+  - name: change admin password
+    shell: su - splunk -c "splunk edit user admin -password `date +%s | sha256sum | base64 | head -c 32` -auth admin:changeme"
+
+  - name: remove /data/tmp and rpm file
+    file: path=/data/tmp/splunkforwarder-latest-linux-2.6-x86_64.rpm state=absent
+
+  - name: restart splunk service
+    service: name=splunk state=restarted

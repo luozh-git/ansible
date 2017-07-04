@@ -1,0 +1,82 @@
+---
+- hosts: splunk_sl3_nodes
+  become: yes
+  become_method: sudo
+  become_flags: -s
+
+  vars:
+    # DEPLOYMENT_SERVER="10.58.152.212" # SL1
+    # DEPLOYMENT_SERVER="10.58.153.24" # SL2
+    DEPLOYMENT_SERVER: 10.58.140.87 # SL3
+
+  tasks:
+  # Check if OSX splunk forwarder already installed.
+  - name: check if new splunk from OSX is installed
+    yum: list=splunkforwarder-6.4.6-6635aa31e851.x86_64
+    register: is_osx_installed
+
+  - fail:
+      msg: "Abort! OSX splunk forwarder already installed!"
+    when: is_osx_installed.results|length >= 1 and is_osx_installed.results[0].yumstate == 'installed'
+  
+  # REMOVE old Splunk from osw1 if there is any.
+  - name: check if old splunk from osw1 is installed
+    yum: list=splunk-jboss-tomcat
+    register: is_installed
+  
+  - debug: var=is_installed
+
+  - name: Stop old Splunk service
+    service: name=splunk state=stopped
+    when: is_installed.results|length >= 1 and is_installed.results[0].yumstate == 'installed'
+  
+  - name: remove it if installed
+    yum: name=splunk-jboss-tomcat state=absent
+    when: is_installed.results|length >= 1 and is_installed.results[0].yumstate == 'installed'
+
+  - name: clean up old splunk directory
+    file: path=/data/splunkforwarder state=absent
+    when: is_installed.results|length >= 1 and is_installed.results[0].yumstate == 'installed'
+
+  - name: delete the old splunk service
+    command: chkconfig --del splunk
+    when: is_installed.results|length >= 1 and is_installed.results[0].yumstate == 'installed'
+
+  # INSTALL new Splunk from OSX.
+  - name: create /data/tmp
+    file: path=/data/tmp state=directory
+
+  - name: copy splunk rpm file
+    copy: src=splunkforwarder-latest-linux-2.6-x86_64.rpm dest=/data/tmp/splunkforwarder-latest-linux-2.6-x86_64.rpm
+
+  - name: install sysstat and bc
+    yum: name=sysstat,bc state=present
+
+  - name: install splunk forwarder
+    yum: name=/data/tmp/splunkforwarder-latest-linux-2.6-x86_64.rpm state=present
+
+  - name: accept-license
+    shell: su - splunk -c "splunk start --accept-license"
+
+  - name: set deployment server
+    #shell: su - splunk -c "splunk set deploy-poll 10.58.140.87:8089 -auth admin:changeme"
+    shell: su - splunk -c "splunk set deploy-poll {{ DEPLOYMENT_SERVER }}:8089 -auth admin:changeme"
+
+  - name: enable init script
+    shell: /opt/splunkforwarder/bin/splunk enable boot-start -user splunk
+
+  - name: change admin password
+    shell: su - splunk -c "splunk edit user admin -password `date +%s | sha256sum | base64 | head -c 32` -auth admin:changeme"
+
+  - name: remove /data/tmp and rpm file
+    file: path=/data/tmp/splunkforwarder-latest-linux-2.6-x86_64.rpm state=absent
+
+  # Pause a few seconds during the final restart
+  # deploymentclient.conf will NOT be read without pausing
+  - name: restart splunk service
+    service: name=splunk state=restarted sleep=5
+
+  - pause: seconds=10
+
+  - name: restart splunk service
+    service: name=splunk state=restarted sleep=5
